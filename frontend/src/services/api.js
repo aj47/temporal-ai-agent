@@ -32,15 +32,18 @@ export const apiService = {
         }
     },
 
-    async sendMessage(message) {
+    async sendMessage(message, isVoiceMessage = false) {
         if (!message?.trim()) {
             throw new ApiError('Message cannot be empty', 400);
         }
 
         try {
+            // Add a prefix for voice messages to differentiate them in logs if needed
+            const formattedMessage = isVoiceMessage ? `[Voice] ${message}` : message;
+
             const res = await fetch(
-                `${API_BASE_URL}/send-prompt?prompt=${encodeURIComponent(message)}`,
-                { 
+                `${API_BASE_URL}/send-prompt?prompt=${encodeURIComponent(formattedMessage)}`,
+                {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -60,7 +63,7 @@ export const apiService = {
         try {
             const res = await fetch(
                 `${API_BASE_URL}/start-workflow`,
-                { 
+                {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -78,7 +81,7 @@ export const apiService = {
 
     async confirm() {
         try {
-            const res = await fetch(`${API_BASE_URL}/confirm`, { 
+            const res = await fetch(`${API_BASE_URL}/confirm`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -91,5 +94,46 @@ export const apiService = {
                 error.status || 500
             );
         }
+    },
+
+    async getAgentGoal() {
+        try {
+            const res = await fetch(`${API_BASE_URL}/agent-goal`);
+            return handleResponse(res);
+        } catch (error) {
+            throw new ApiError(
+                'Failed to fetch agent goal',
+                error.status || 500
+            );
+        }
+    },
+
+    async getToolData() {
+        try {
+            const res = await fetch(`${API_BASE_URL}/tool-data`);
+            return handleResponse(res);
+        } catch (error) {
+            throw new ApiError(
+                'Failed to fetch tool data',
+                error.status || 500
+            );
+        }
+    },
+
+    async endChat() {
+        try {
+            const res = await fetch(`${API_BASE_URL}/end-chat`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+            return handleResponse(res);
+        } catch (error) {
+            throw new ApiError(
+                'Failed to end chat',
+                error.status || 500
+            );
+        }
     }
-}; 
+};

@@ -1,7 +1,9 @@
 import React, { useEffect, useState, useRef, useCallback } from "react";
 import NavBar from "../components/NavBar";
 import ChatWindow from "../components/ChatWindow";
+import VoiceControl from "../components/VoiceControl";
 import { apiService } from "../services/api";
+import vapiService from "../services/vapiService";
 
 const POLL_INTERVAL = 500; // 0.5 seconds
 const INITIAL_ERROR_STATE = { visible: false, message: '' };
@@ -28,7 +30,7 @@ export default function App() {
     const inputRef = useRef(null);
     const pollingRef = useRef(null);
     const scrollTimeoutRef = useRef(null);
-    
+
     const [conversation, setConversation] = useState([]);
     const [lastMessage, setLastMessage] = useState(null);
     const [userInput, setUserInput] = useState("");
@@ -42,12 +44,12 @@ export default function App() {
 
     const handleError = useCallback((error, context) => {
         console.error(`${context}:`, error);
-        
+
         const isConversationFetchError = error.status === 404;
-        const errorMessage = isConversationFetchError 
+        const errorMessage = isConversationFetchError
             ? "Error fetching conversation. Retrying..."  // Updated message
             : `Error ${context.toLowerCase()}. Please try again.`;
-    
+
         setError(prevError => {
             // If the same 404 error is already being displayed, don't reset state (prevents flickering)
             if (prevError.visible && prevError.message === errorMessage) {
@@ -55,42 +57,42 @@ export default function App() {
             }
             return { visible: true, message: errorMessage };
         });
-    
+
         // Clear any existing timeout
         if (errorTimerRef.current) {
             clearTimeout(errorTimerRef.current);
         }
-    
+
         // Only auto-dismiss non-404 errors after 3 seconds
         if (!isConversationFetchError) {
             errorTimerRef.current = setTimeout(() => setError(INITIAL_ERROR_STATE), 3000);
         }
     }, []);
-    
-    
+
+
     const clearErrorOnSuccess = useCallback(() => {
         if (errorTimerRef.current) {
             clearTimeout(errorTimerRef.current);
         }
         setError(INITIAL_ERROR_STATE);
     }, []);
-    
+
     const fetchConversationHistory = useCallback(async () => {
         try {
             const data = await apiService.getConversationHistory();
             const newConversation = data.messages || [];
-            
-            setConversation(prevConversation => 
+
+            setConversation(prevConversation =>
                 JSON.stringify(prevConversation) !== JSON.stringify(newConversation) ? newConversation : prevConversation
             );
-    
+
             if (newConversation.length > 0) {
                 const lastMsg = newConversation[newConversation.length - 1];
                 const isAgentMessage = lastMsg.actor === "agent";
-                
+
                 setLoading(!isAgentMessage);
                 setDone(lastMsg.response.next === "done");
-    
+
                 setLastMessage(prevLastMessage =>
                     !prevLastMessage || lastMsg.response.response !== prevLastMessage.response.response
                         ? lastMsg
@@ -101,28 +103,39 @@ export default function App() {
                 setDone(true);
                 setLastMessage(null);
             }
-    
+
             // Successfully fetched data, clear any persistent errors
             clearErrorOnSuccess();
         } catch (err) {
             handleError(err, "fetching conversation");
         }
     }, [handleError, clearErrorOnSuccess]);
-    
+
     // Setup polling with cleanup
     useEffect(() => {
         pollingRef.current = setInterval(fetchConversationHistory, POLL_INTERVAL);
-        
+
         return () => clearInterval(pollingRef.current);
     }, [fetchConversationHistory]);
-    
+
+    // Initialize VAPI service and clean up on unmount
+    useEffect(() => {
+        // Initialize VAPI service
+        vapiService.initialize();
+
+        // Clean up VAPI service on unmount
+        return () => {
+            vapiService.cleanup();
+        };
+    }, []);
+
 
     const scrollToBottom = useCallback(() => {
         if (containerRef.current) {
             if (scrollTimeoutRef.current) {
                 clearTimeout(scrollTimeoutRef.current);
             }
-            
+
             scrollTimeoutRef.current = setTimeout(() => {
                 const element = containerRef.current;
                 element.scrollTop = element.scrollHeight;
@@ -145,7 +158,7 @@ export default function App() {
         if (inputRef.current && !loading && !done) {
             inputRef.current.focus();
         }
-        
+
         return () => {
             if (scrollTimeoutRef.current) {
                 clearTimeout(scrollTimeoutRef.current);
@@ -156,7 +169,7 @@ export default function App() {
     const handleSendMessage = async () => {
         const trimmedInput = userInput.trim();
         if (!trimmedInput) return;
-        
+
         try {
             setLoading(true);
             setError(INITIAL_ERROR_STATE);
@@ -193,22 +206,36 @@ export default function App() {
         }
     };
 
+    // Handle voice messages from VAPI
+    const handleVoiceMessage = async (transcript) => {
+        if (!transcript || loading || done) return;
+
+        try {
+            setLoading(true);
+            setError(INITIAL_ERROR_STATE);
+            await apiService.sendMessage(transcript, true); // true indicates it's a voice message
+        } catch (err) {
+            handleError(err, "sending voice message");
+            setLoading(false);
+        }
+    };
+
     return (
         <div className="flex flex-col h-screen">
             <NavBar title="Temporal AI Agent 🤖" />
 
             {error.visible && (
-                <div className="fixed top-16 left-1/2 transform -translate-x-1/2 
-                    bg-red-500 text-white px-4 py-2 rounded shadow-lg z-50 
+                <div className="fixed top-16 left-1/2 transform -translate-x-1/2
+                    bg-red-500 text-white px-4 py-2 rounded shadow-lg z-50
                     transition-opacity duration-300">
                     {error.message}
                 </div>
             )}
 
             <div className="flex-grow flex justify-center px-4 py-2 overflow-hidden">
-                <div className="w-full max-w-lg bg-white dark:bg-gray-900 p-8 px-3 rounded shadow-md 
+                <div className="w-full max-w-lg bg-white dark:bg-gray-900 p-8 px-3 rounded shadow-md
                     flex flex-col overflow-hidden">
-                    <div ref={containerRef} 
+                    <div ref={containerRef}
                         className="flex-grow overflow-y-auto pb-20 pt-10 scroll-smooth">
                         <ChatWindow
                             conversation={conversation}
@@ -217,7 +244,7 @@ export default function App() {
                             onContentChange={handleContentChange}
                         />
                         {done && (
-                            <div className="text-center text-sm text-gray-500 dark:text-gray-400 mt-4 
+                            <div className="text-center text-sm text-gray-500 dark:text-gray-400 mt-4
                                 animate-fade-in">
                                 Chat ended
                             </div>
@@ -226,45 +253,56 @@ export default function App() {
                 </div>
             </div>
 
-            <div className="fixed bottom-0 left-1/2 transform -translate-x-1/2 
+            <div className="fixed bottom-0 left-1/2 transform -translate-x-1/2
                 w-full max-w-lg bg-white dark:bg-gray-900 p-4
                 border-t border-gray-300 dark:border-gray-700 shadow-lg
                 transition-all duration-200"
                 style={{ zIndex: 10 }}>
-                <form onSubmit={(e) => {
-                    e.preventDefault();
-                    handleSendMessage();
-                }} className="flex items-center">
-                    <input
-                        ref={inputRef}
-                        type="text"
-                        className={`flex-grow rounded-l px-3 py-2 border border-gray-300
-                            dark:bg-gray-700 dark:border-gray-600 focus:outline-none
-                            transition-opacity duration-200
-                            ${loading || done ? "opacity-50 cursor-not-allowed" : ""}`}
-                        placeholder="Type your message..."
-                        value={userInput}
-                        onChange={(e) => setUserInput(e.target.value)}
-                        disabled={loading || done}
-                        aria-label="Type your message"
-                    />
-                    <button
-                        type="submit"
-                        className={`bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-r 
-                            transition-all duration-200
-                            ${loading || done ? "opacity-50 cursor-not-allowed" : ""}`}
-                        disabled={loading || done}
-                        aria-label="Send message"
-                    >
-                        Send
-                    </button>
-                </form>
-                
+                <div className="flex items-center gap-2">
+                    {/* Voice control component */}
+                    <div className="flex-shrink-0">
+                        <VoiceControl
+                            onVoiceMessage={handleVoiceMessage}
+                            disabled={loading || done}
+                        />
+                    </div>
+
+                    {/* Text input form */}
+                    <form onSubmit={(e) => {
+                        e.preventDefault();
+                        handleSendMessage();
+                    }} className="flex items-center flex-grow">
+                        <input
+                            ref={inputRef}
+                            type="text"
+                            className={`flex-grow rounded-l px-3 py-2 border border-gray-300
+                                dark:bg-gray-700 dark:border-gray-600 focus:outline-none
+                                transition-opacity duration-200
+                                ${loading || done ? "opacity-50 cursor-not-allowed" : ""}`}
+                            placeholder="Type your message..."
+                            value={userInput}
+                            onChange={(e) => setUserInput(e.target.value)}
+                            disabled={loading || done}
+                            aria-label="Type your message"
+                        />
+                        <button
+                            type="submit"
+                            className={`bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-r
+                                transition-all duration-200
+                                ${loading || done ? "opacity-50 cursor-not-allowed" : ""}`}
+                            disabled={loading || done}
+                            aria-label="Send message"
+                        >
+                            Send
+                        </button>
+                    </form>
+                </div>
+
                 <div className="text-right mt-3">
                     <button
                         onClick={handleStartNewChat}
-                        className={`text-sm underline text-gray-600 dark:text-gray-400 
-                            hover:text-gray-800 dark:hover:text-gray-200 
+                        className={`text-sm underline text-gray-600 dark:text-gray-400
+                            hover:text-gray-800 dark:hover:text-gray-200
                             transition-all duration-200
                             ${!done ? "opacity-0 cursor-not-allowed" : ""}`}
                         disabled={!done}
