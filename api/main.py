@@ -37,7 +37,7 @@ async def startup_event():
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "http://localhost:5174"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -119,7 +119,7 @@ async def get_conversation_history():
             raise HTTPException(
                 status_code=500, detail="Internal server error while querying workflow."
             )
-    
+
 @app.get("/agent-goal")
 async def get_agent_goal():
     """Calls the workflow's 'get_agent_goal' query."""

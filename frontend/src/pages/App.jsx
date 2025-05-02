@@ -7,23 +7,6 @@ import vapiService from "../services/vapiService";
 
 const POLL_INTERVAL = 500; // 0.5 seconds
 const INITIAL_ERROR_STATE = { visible: false, message: '' };
-const DEBOUNCE_DELAY = 300; // 300ms debounce for user input
-
-function useDebounce(value, delay) {
-    const [debouncedValue, setDebouncedValue] = useState(value);
-
-    useEffect(() => {
-        const handler = setTimeout(() => {
-            setDebouncedValue(value);
-        }, delay);
-
-        return () => {
-            clearTimeout(handler);
-        };
-    }, [value, delay]);
-
-    return debouncedValue;
-}
 
 export default function App() {
     const containerRef = useRef(null);
@@ -38,7 +21,8 @@ export default function App() {
     const [error, setError] = useState(INITIAL_ERROR_STATE);
     const [done, setDone] = useState(true);
 
-    const debouncedUserInput = useDebounce(userInput, DEBOUNCE_DELAY);
+    // Uncomment if debounced input is needed in the future
+    // const debouncedUserInput = useDebounce(userInput, DEBOUNCE_DELAY);
 
     const errorTimerRef = useRef(null);
 
@@ -82,19 +66,46 @@ export default function App() {
             const data = await apiService.getConversationHistory();
             const newConversation = data.messages || [];
 
-            setConversation(prevConversation =>
-                JSON.stringify(prevConversation) !== JSON.stringify(newConversation) ? newConversation : prevConversation
-            );
+            // Only update the conversation if it's different from what we have
+            // This prevents flickering and maintains local optimistic updates
+            setConversation(prevConversation => {
+                // If the lengths are different, definitely update
+                if (prevConversation.length !== newConversation.length) {
+                    return newConversation;
+                }
+
+                // Check if the conversations are different
+                const isDifferent = JSON.stringify(prevConversation) !== JSON.stringify(newConversation);
+
+                // If they're different but have the same length, we need to be careful
+                // not to lose optimistically added messages that haven't been processed by the backend yet
+                if (isDifferent) {
+                    // Get the last message from both conversations
+                    const lastServerMsg = newConversation[newConversation.length - 1];
+                    const lastLocalMsg = prevConversation[prevConversation.length - 1];
+
+                    // If the last local message is a user message and the last server message is not,
+                    // it means the backend hasn't processed our message yet, so keep our local version
+                    if (lastLocalMsg.actor === "user" && lastServerMsg.actor !== "user") {
+                        // Keep our optimistic update and add the new server message
+                        return [...newConversation, lastLocalMsg];
+                    }
+
+                    return newConversation;
+                }
+
+                return prevConversation;
+            });
 
             if (newConversation.length > 0) {
                 const lastMsg = newConversation[newConversation.length - 1];
                 const isAgentMessage = lastMsg.actor === "agent";
 
                 setLoading(!isAgentMessage);
-                setDone(lastMsg.response.next === "done");
+                setDone(lastMsg.response?.next === "done");
 
                 setLastMessage(prevLastMessage =>
-                    !prevLastMessage || lastMsg.response.response !== prevLastMessage.response.response
+                    !prevLastMessage || lastMsg.response?.response !== prevLastMessage.response?.response
                         ? lastMsg
                         : prevLastMessage
                 );
@@ -171,11 +182,21 @@ export default function App() {
         if (!trimmedInput) return;
 
         try {
+            // Immediately add user message to local conversation state for instant feedback
+            setConversation(prevConversation => [
+                ...prevConversation,
+                { actor: "user", response: trimmedInput }
+            ]);
+
             setLoading(true);
             setError(INITIAL_ERROR_STATE);
             await apiService.sendMessage(trimmedInput);
             setUserInput("");
         } catch (err) {
+            // If there's an error, we should remove the optimistically added message
+            setConversation(prevConversation =>
+                prevConversation.filter(msg => !(msg.actor === "user" && msg.response === trimmedInput))
+            );
             handleError(err, "sending message");
             setLoading(false);
         }
@@ -211,10 +232,20 @@ export default function App() {
         if (!transcript || loading || done) return;
 
         try {
+            // Immediately add voice message to local conversation state for instant feedback
+            setConversation(prevConversation => [
+                ...prevConversation,
+                { actor: "user", response: `[Voice] ${transcript}` }
+            ]);
+
             setLoading(true);
             setError(INITIAL_ERROR_STATE);
             await apiService.sendMessage(transcript, true); // true indicates it's a voice message
         } catch (err) {
+            // If there's an error, we should remove the optimistically added message
+            setConversation(prevConversation =>
+                prevConversation.filter(msg => !(msg.actor === "user" && msg.response === `[Voice] ${transcript}`))
+            );
             handleError(err, "sending voice message");
             setLoading(false);
         }
